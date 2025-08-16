@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { GoogleGenAI, GenerateContentResponse, Type } from '@google/genai';
-import { TALKERS_CAVE_SCENES, TALKERS_CAVE_SCENE_IMAGES, TALKERS_CAVE_CHARACTER_IMAGES } from '../constants';
+import { TALKERS_CAVE_SCENES, TALKERS_CAVE_SCENE_IMAGES, TALKERS_CAVE_CHARACTER_IMAGES, TALKERS_CAVE_SCENE_BACKGROUNDS } from '../constants';
 import { MicrophoneIcon } from './icons/MicrophoneIcon';
 import { PracticeSoundIcon } from './icons/PracticeSoundIcon';
 
@@ -671,6 +671,17 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
     window.speechSynthesis.speak(utterance);
   };
 
+  const backgroundStyle = useMemo(() => {
+    if (step !== 'SCENE' && selectedScene) {
+      return {
+        backgroundImage: `url(${TALKERS_CAVE_SCENE_BACKGROUNDS[selectedScene]})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      };
+    }
+    return {};
+  }, [step, selectedScene]);
+
   const renderTitle = () => {
     if (!guidelines && step !== 'GAME') return 'Loading Rules...';
     switch (step) {
@@ -824,7 +835,10 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
   };
 
   return (
-    <div className="w-full h-full text-white relative flex flex-col justify-center animate-fade-in">
+    <div
+        className="w-full h-full text-white relative flex flex-col justify-center animate-fade-in"
+        style={backgroundStyle}
+    >
         <div className="absolute top-4 sm:top-6 left-1/2 -translate-x-1/2 w-full px-4 text-center z-20">
              <h1 className="text-3xl sm:text-5xl font-bold text-cyan-400" style={{textShadow: '2px 2px 8px rgba(0,0,0,0.7)'}}>{renderTitle()}</h1>
         </div>

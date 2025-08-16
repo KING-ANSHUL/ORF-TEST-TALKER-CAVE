@@ -11,6 +11,12 @@ export const TALKERS_CAVE_SCENE_IMAGES: Record<string, string> = {
   'Waiter and Customer': '/scene-waiter-customer.png',
 };
 
+export const TALKERS_CAVE_SCENE_BACKGROUNDS: Record<string, string> = {
+  'Doctor and Patient': '/hospital_background.png',
+  'Shopkeeper and Customer': '/shop_background.png',
+  'Waiter and Customer': '/restro_background.png',
+};
+
 export const TALKERS_CAVE_CHARACTER_IMAGES: Record<string, string> = {
   'Doctor': '/character-doctor.png',
   'Patient': '/character-patient.png',
