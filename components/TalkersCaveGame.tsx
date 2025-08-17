@@ -675,8 +675,10 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
     if (step !== 'SCENE' && selectedScene) {
       return {
         backgroundImage: `url(${TALKERS_CAVE_SCENE_BACKGROUNDS[selectedScene]})`,
-        backgroundSize: 'cover',
+        backgroundSize: 'contain',
         backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+        backgroundColor: 'black',
       };
     }
     return {};
