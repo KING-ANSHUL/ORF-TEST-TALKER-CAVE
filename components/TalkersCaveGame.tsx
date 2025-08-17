@@ -89,13 +89,6 @@ interface Guidelines {
   grades: Grade[];
 }
 
-const preloadImages = (urls: string[]) => {
-  urls.forEach(url => {
-    const img = new Image();
-    img.src = url;
-  });
-};
-
 // Utility Functions
 const cleanWord = (word: string) => word.trim().toLowerCase().replace(/[.,?!]/g, '');
 
@@ -259,16 +252,6 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
 
   const processUserTurnRef = useRef(processUserTurn);
   useEffect(() => { processUserTurnRef.current = processUserTurn; }, [processUserTurn]);
-
-  useEffect(() => {
-    if (step === 'SCENE') {
-      const imagesToPreload = [
-        ...Object.values(TALKERS_CAVE_CHARACTER_IMAGES),
-        ...Object.values(TALKERS_CAVE_SCENE_BACKGROUNDS),
-      ];
-      preloadImages(imagesToPreload);
-    }
-  }, [step]);
 
   // Effect to set up practice recognizer ONCE
   useEffect(() => {
