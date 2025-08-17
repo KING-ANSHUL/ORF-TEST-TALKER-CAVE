@@ -89,6 +89,12 @@ interface Guidelines {
   grades: Grade[];
 }
 
+const preloadImages = (urls: string[]) => {
+  urls.forEach(url => {
+    const img = new Image();
+    img.src = url;
+  });
+};
 
 // Utility Functions
 const cleanWord = (word: string) => word.trim().toLowerCase().replace(/[.,?!]/g, '');
@@ -255,17 +261,14 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
   useEffect(() => { processUserTurnRef.current = processUserTurn; }, [processUserTurn]);
 
   useEffect(() => {
-    fetch('/orf_content_guidelines_with_practice_framework.json')
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-        return res.json();
-      })
-      .then(data => setGuidelines(data as Guidelines))
-      .catch(err => {
-        console.error("Failed to load ORF content guidelines:", err);
-        setError("Critical Error: Could not load content rules. Please refresh.");
-      });
-  }, []);
+    if (step === 'SCENE') {
+      const imagesToPreload = [
+        ...Object.values(TALKERS_CAVE_CHARACTER_IMAGES),
+        ...Object.values(TALKERS_CAVE_SCENE_BACKGROUNDS),
+      ];
+      preloadImages(imagesToPreload);
+    }
+  }, [step]);
 
   // Effect to set up practice recognizer ONCE
   useEffect(() => {
@@ -513,25 +516,32 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
   }, [practiceStatus]);
 
   const generateScript = useCallback(async (scene: Scene, character: string) => {
-    if (!guidelines) {
-        setError("Content rules are still loading. Please wait a moment.");
-        return;
-    }
     setError(null);
     setStep('LOADING_SCRIPT');
     
     try {
+        let loadedGuidelines = guidelines;
+        if (!loadedGuidelines) {
+            const res = await fetch('/orf_content_guidelines_with_practice_framework.json');
+            if (!res.ok) {
+                throw new Error(`Failed to load content rules: ${res.statusText}`);
+            }
+            const data = await res.json() as Guidelines;
+            setGuidelines(data);
+            loadedGuidelines = data;
+        }
+
         const aiCharacter = TALKERS_CAVE_SCENES[scene].find(c => c !== character);
         if (!aiCharacter) throw new Error("Could not determine AI character.");
 
-        const gradeData = guidelines.grades.find((g: any) => g.grade === userGrade);
+        const gradeData = loadedGuidelines.grades.find((g: any) => g.grade === userGrade);
         if (!gradeData) {
             throw new Error(`Guidelines for grade ${userGrade} not found in orf_content_guidelines.json.`);
         }
         
         const internalLevelIndex = (currentLevel - 1) % gradeData.level_progression_hint.length;
         const levelHint = gradeData.level_progression_hint[internalLevelIndex];
-        const { global_rules } = guidelines;
+        const { global_rules } = loadedGuidelines;
         const sightWordExamples = gradeData.sight_words.examples.filter((_:any, i: number) => i % 2 === 0).join(', ');
 
         const languageName = language === 'hi' ? 'Hindi' : 'English';
@@ -685,7 +695,6 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
   }, [step, selectedScene]);
 
   const renderTitle = () => {
-    if (!guidelines && step !== 'GAME') return 'Loading Rules...';
     switch (step) {
       case 'SCENE': return 'Select Scene';
       case 'CHARACTER': return 'Select Character';
@@ -707,8 +716,7 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
             <div className="flex w-full h-full items-center justify-center gap-4 md:gap-8 px-4">
               {scenes.map((scene) => (
                   <button key={scene} onClick={() => handleSceneSelect(scene)} onMouseEnter={() => setCenteredScene(scene)} aria-label={`Select scene: ${scene}`}
-                    disabled={!guidelines}
-                    className={`relative w-60 md:w-72 aspect-[16/10] flex-shrink-0 overflow-hidden rounded-2xl shadow-lg transition-all duration-500 ease-in-out transform group ${centeredScene === scene ? 'scale-110 opacity-100 shadow-cyan-500/40 z-10' : 'scale-90 opacity-60'} hover:!scale-110 hover:!opacity-100 hover:shadow-cyan-400/50 disabled:opacity-50 disabled:cursor-wait`}>
+                    className={`relative w-60 md:w-72 aspect-[16/10] flex-shrink-0 overflow-hidden rounded-2xl shadow-lg transition-all duration-500 ease-in-out transform group ${centeredScene === scene ? 'scale-110 opacity-100 shadow-cyan-500/40 z-10' : 'scale-90 opacity-60'} hover:!scale-110 hover:!opacity-100 hover:shadow-cyan-400/50`}>
                     <img src={TALKERS_CAVE_SCENE_IMAGES[scene]} alt={scene} className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
                     <h3 className="absolute bottom-4 left-4 right-4 text-white font-bold text-lg md:text-xl text-left truncate" style={{ textShadow: '1px 1px 4px rgba(0,0,0,0.8)' }}>{scene}</h3>
