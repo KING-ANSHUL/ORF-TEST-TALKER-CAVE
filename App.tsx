@@ -3,6 +3,14 @@ import { TalkersCaveGame } from './components/TalkersCaveGame';
 import { GradeSelectionScreen } from './components/GradeSelectionScreen';
 import { LanguageSelectionScreen } from './components/LanguageSelectionScreen';
 import { PermissionScreen } from './components/PermissionScreen';
+import { TALKERS_CAVE_SCENE_IMAGES, TALKERS_CAVE_CHARACTER_IMAGES, TALKERS_CAVE_SCENE_BACKGROUNDS } from './constants';
+
+const preloadImages = (urls: string[]) => {
+  urls.forEach(url => {
+    const img = new Image();
+    img.src = url;
+  });
+};
 
 export const App: React.FC = () => {
   const [userGrade, setUserGrade] = React.useState<number | null>(null);
@@ -11,6 +19,16 @@ export const App: React.FC = () => {
   const [currentLevel, setCurrentLevel] = React.useState(1);
   const [gameKey, setGameKey] = React.useState(0);
   const [isFinished, setIsFinished] = React.useState(false);
+
+  React.useEffect(() => {
+    const initialImages = [
+      '/Background.png',
+      ...Object.values(TALKERS_CAVE_SCENE_IMAGES),
+      ...Object.values(TALKERS_CAVE_CHARACTER_IMAGES),
+      ...Object.values(TALKERS_CAVE_SCENE_BACKGROUNDS),
+    ];
+    preloadImages(initialImages);
+  }, []);
 
   React.useEffect(() => {
     if (selectedLanguage && !micPermissionGranted) {
