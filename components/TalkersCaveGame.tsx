@@ -3,6 +3,7 @@ import { GoogleGenAI, GenerateContentResponse, Type } from '@google/genai';
 import { TALKERS_CAVE_SCENES, TALKERS_CAVE_SCENE_IMAGES, TALKERS_CAVE_CHARACTER_IMAGES, TALKERS_CAVE_SCENE_BACKGROUNDS } from '../constants';
 import { MicrophoneIcon } from './icons/MicrophoneIcon';
 import { PracticeSoundIcon } from './icons/PracticeSoundIcon';
+import { guidelines as allGuidelines } from '../guidelines';
 
 declare global {
   interface SpeechRecognition {
@@ -224,8 +225,6 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
   const [practiceStatus, setPracticeStatus] = useState<'IDLE' | 'LISTENING' | 'SUCCESS' | 'TRY_AGAIN'>('IDLE');
   const [practiceTranscript, setPracticeTranscript] = useState('');
   
-  const [guidelines, setGuidelines] = useState<Guidelines | null>(null);
-
   const hasProcessedTurn = useRef(false);
   const wasStoppedIntentionally = useRef(false);
   
@@ -503,16 +502,7 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
     setStep('LOADING_SCRIPT');
     
     try {
-        let loadedGuidelines = guidelines;
-        if (!loadedGuidelines) {
-            const res = await fetch('/orf_content_guidelines_with_practice_framework.json');
-            if (!res.ok) {
-                throw new Error(`Failed to load content rules: ${res.statusText}`);
-            }
-            const data = await res.json() as Guidelines;
-            setGuidelines(data);
-            loadedGuidelines = data;
-        }
+        const loadedGuidelines = allGuidelines as Guidelines;
 
         const aiCharacter = TALKERS_CAVE_SCENES[scene].find(c => c !== character);
         if (!aiCharacter) throw new Error("Could not determine AI character.");
@@ -591,7 +581,7 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
         setError(`Sorry, I couldn't create a script. ${errorMessage} Please try again.`);
         setStep('CHARACTER');
     }
-  }, [userGrade, currentLevel, guidelines, language]);
+  }, [userGrade, currentLevel, language]);
 
   const startRecognition = useCallback(() => {
     if (!speechRecognizer || isRecognitionActive) return;
