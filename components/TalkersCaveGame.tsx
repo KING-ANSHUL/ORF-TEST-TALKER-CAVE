@@ -94,35 +94,46 @@ interface Guidelines {
 const cleanWord = (word: string) => word.trim().toLowerCase().replace(/[.,?!]/g, '');
 
 const extractJson = <T,>(text: string): T | null => {
+    if (!text || !text.trim()) {
+        console.error("Cannot parse JSON from empty or whitespace string.");
+        return null;
+    }
+
+    const trimmedText = text.trim();
+
     try {
-        let jsonStr = text.trim();
+        // Attempt 1: Look for markdown code fence and parse its content
         const fenceRegex = /```(?:json)?\s*([\s\S]*?)\s*```/;
-        const fenceMatch = jsonStr.match(fenceRegex);
-
+        const fenceMatch = trimmedText.match(fenceRegex);
         if (fenceMatch && fenceMatch[1]) {
-            jsonStr = fenceMatch[1].trim();
-        } else {
-            const firstBracket = jsonStr.indexOf('[');
-            const lastBracket = jsonStr.lastIndexOf(']');
-            const firstBrace = jsonStr.indexOf('{');
-            const lastBrace = jsonStr.lastIndexOf('}');
-
-            let start = -1;
-            let end = -1;
-            
-            if (firstBracket !== -1 && firstBrace !== -1) start = Math.min(firstBracket, firstBrace);
-            else if (firstBracket !== -1) start = firstBracket;
-            else start = firstBrace;
-
-            if (lastBracket !== -1 && lastBrace !== -1) end = Math.max(lastBracket, lastBrace);
-            else if (lastBracket !== -1) end = lastBracket;
-            else end = lastBrace;
-
-            if (start !== -1 && end > start) {
-                jsonStr = jsonStr.substring(start, end + 1);
-            }
+            return JSON.parse(fenceMatch[1]) as T;
         }
+
+        // Attempt 2: Find the outer-most JSON object or array
+        const firstBracket = trimmedText.indexOf('[');
+        const firstBrace = trimmedText.indexOf('{');
+        
+        let start = -1;
+        if (firstBracket === -1) start = firstBrace;
+        else if (firstBrace === -1) start = firstBracket;
+        else start = Math.min(firstBracket, firstBrace);
+
+        if (start === -1) {
+            // No JSON structure found
+            throw new Error("No JSON object or array found in the string.");
+        }
+
+        const lastBracket = trimmedText.lastIndexOf(']');
+        const lastBrace = trimmedText.lastIndexOf('}');
+        const end = Math.max(lastBracket, lastBrace);
+
+        if (end < start) {
+            throw new Error("Mismatched JSON object or array delimiters.");
+        }
+        
+        const jsonStr = trimmedText.substring(start, end + 1);
         return JSON.parse(jsonStr) as T;
+
     } catch (e) {
         console.error("Failed to parse JSON from response:", text, e);
         return null;
@@ -792,10 +803,14 @@ The scene is "${scene}". The user plays as "${userChar}". The AI is "${aiCharact
 
         const [characterOnLeft, characterOnRight] = TALKERS_CAVE_SCENES[selectedScene];
         const currentLine = conversationHistory[conversationHistory.length - 1];
-        const isLeftCharacterSpeaking = currentLine.character === characterOnLeft;
-        const isUserTurn = currentLine.character !== selectedCharacter;
 
-        const aiThinking = isGenerating && isUserTurn && userResponseOptions.length === 0;
+        const isUserTurnToAct = currentLine.character !== selectedCharacter;
+        const isUserPreparingToSpeak = isUserTurnToAct && selectedUserLine;
+        const isUserOnLeft = selectedCharacter === characterOnLeft;
+        const isCurrentSpeakerLeft = currentLine.character === characterOnLeft;
+        const isLeftCharacterSpeaking = isCurrentSpeakerLeft;
+        
+        const aiThinking = isGenerating && isUserTurnToAct && userResponseOptions.length === 0;
 
         return (
           <div className='w-full h-full relative flex flex-col overflow-hidden'>
@@ -803,18 +818,10 @@ The scene is "${scene}". The user plays as "${userChar}". The AI is "${aiCharact
               <div className={`absolute bottom-0 left-0 md:left-[5%] w-1/2 md:w-2/5 h-2/3 md:h-4/5 transition-transform duration-500 ${isLeftCharacterSpeaking ? 'scale-110' : 'scale-100'}`}><img src={TALKERS_CAVE_CHARACTER_IMAGES[characterOnLeft]} alt={characterOnLeft} className="w-full h-full object-contain"/></div>
               <div className={`absolute bottom-0 right-0 md:right-[5%] w-1/2 md:w-2/5 h-2/3 md:h-4/5 transition-transform duration-500 ${!isLeftCharacterSpeaking ? 'scale-110' : 'scale-100'}`}><img src={TALKERS_CAVE_CHARACTER_IMAGES[characterOnRight]} alt={characterOnRight} className="w-full h-full object-contain"/></div>
               
-              {!isUserTurn && (
-                <div className={`absolute top-[8%] w-4/5 md:w-2/5 max-w-lg transition-all duration-300 ease-out ${!isLeftCharacterSpeaking ? 'right-[5%] md:right-[15%]' : 'left-[5%] md:left-[15%]'}`}>
-                    <div className={`relative bg-white text-slate-900 p-4 rounded-2xl shadow-2xl ${!isLeftCharacterSpeaking ? 'rounded-br-none' : 'rounded-bl-none'}`}>
-                    <p className="text-lg font-medium">{currentLine.line}</p>
-                    <div className={`absolute bottom-0 h-0 w-0 border-solid border-transparent border-t-white ${!isLeftCharacterSpeaking ? 'right-4 border-r-[15px] border-l-0 border-t-[15px] -mb-[15px]' : 'left-4 border-l-[15px] border-r-0 border-t-[15px] -mb-[15px]'}`}></div>
-                    </div>
-                </div>
-              )}
-
-              {isUserTurn && selectedUserLine && (
-                 <div className={`absolute top-[8%] w-4/5 md:w-2/5 max-w-lg transition-all duration-300 ease-out ${selectedCharacter === characterOnLeft ? 'left-[5%] md:left-[15%]' : 'right-[5%] md:right-[15%]'}`}>
-                    <div className={`relative bg-white text-slate-900 p-4 rounded-2xl shadow-2xl ${selectedCharacter === characterOnLeft ? 'rounded-bl-none' : 'rounded-br-none'}`}>
+              {isUserPreparingToSpeak ? (
+                // User is about to speak their selected line
+                <div className={`absolute top-[8%] w-4/5 md:w-2/5 max-w-lg transition-all duration-300 ease-out ${isUserOnLeft ? 'left-[5%] md:left-[15%]' : 'right-[5%] md:right-[15%]'}`}>
+                    <div className={`relative bg-white text-slate-900 p-4 rounded-2xl shadow-2xl ${isUserOnLeft ? 'rounded-bl-none' : 'rounded-br-none'}`}>
                         <p className="text-lg font-medium leading-relaxed">{selectedUserLine}</p>
                         {(isRecognitionActive || userTranscript) && (
                         <>
@@ -824,12 +831,20 @@ The scene is "${scene}". The user plays as "${userChar}". The AI is "${aiCharact
                             </p>
                         </>
                         )}
-                        <div className={`absolute bottom-0 h-0 w-0 border-solid border-transparent border-t-white ${selectedCharacter === characterOnLeft ? 'left-4 border-l-[15px] border-r-0 border-t-[15px] -mb-[15px]' : 'right-4 border-r-[15px] border-l-0 border-t-[15px] -mb-[15px]'}`}></div>
+                        <div className={`absolute bottom-0 h-0 w-0 border-solid border-transparent border-t-white ${isUserOnLeft ? 'left-4 border-l-[15px] border-r-0 border-t-[15px] -mb-[15px]' : 'right-4 border-r-[15px] border-l-0 border-t-[15px] -mb-[15px]'}`}></div>
+                    </div>
+                </div>
+              ) : (
+                // Show the last line spoken (either AI or User)
+                <div className={`absolute top-[8%] w-4/5 md:w-2/5 max-w-lg transition-all duration-300 ease-out ${!isCurrentSpeakerLeft ? 'right-[5%] md:right-[15%]' : 'left-[5%] md:left-[15%]'}`}>
+                    <div className={`relative bg-white text-slate-900 p-4 rounded-2xl shadow-2xl ${!isCurrentSpeakerLeft ? 'rounded-br-none' : 'rounded-bl-none'}`}>
+                        <p className="text-lg font-medium">{currentLine.line}</p>
+                        <div className={`absolute bottom-0 h-0 w-0 border-solid border-transparent border-t-white ${!isCurrentSpeakerLeft ? 'right-4 border-r-[15px] border-l-0 border-t-[15px] -mb-[15px]' : 'left-4 border-l-[15px] border-r-0 border-t-[15px] -mb-[15px]'}`}></div>
                     </div>
                 </div>
               )}
 
-              {isUserTurn && !selectedUserLine && userResponseOptions.length > 0 && (
+              {isUserTurnToAct && !selectedUserLine && userResponseOptions.length > 0 && (
                 <div className="absolute inset-x-0 top-1/4 flex flex-col items-center gap-4 animate-fade-in p-4">
                   <h3 className="text-xl font-bold mb-2 text-white" style={{textShadow: '1px 1px 4px rgba(0,0,0,0.7)'}}>Choose your reply:</h3>
                   {userResponseOptions.map((option, index) => (
@@ -844,7 +859,7 @@ The scene is "${scene}". The user plays as "${userChar}". The AI is "${aiCharact
             </div>
             <div className="h-16 flex-shrink-0 bg-slate-900/50 flex items-center justify-center text-slate-300 relative">
               {recognitionError ? <p className="text-red-400 font-semibold">{recognitionError}</p> : (
-                isUserTurn && selectedUserLine ? (
+                isUserPreparingToSpeak ? (
                   <button
                       onClick={handleMicButtonClick}
                       disabled={isAiSpeaking}
