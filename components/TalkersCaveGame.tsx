@@ -203,14 +203,18 @@ const analyzeReadingWithAI = async (spokenText: string, targetText: string, lang
     }
 };
 
+const MAX_TURNS = 8;
+
 export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, userGrade, currentLevel, onBackToGrades, language }) => {
   const [step, setStep] = useState<Step>('SCENE');
   const [selectedScene, setSelectedScene] = useState<Scene | null>(null);
   const [centeredScene, setCenteredScene] = useState<Scene>('Shopkeeper and Customer');
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null);
-  const [script, setScript] = useState<ScriptLine[]>([]);
+  const [conversationHistory, setConversationHistory] = useState<ScriptLine[]>([]);
+  const [userResponseOptions, setUserResponseOptions] = useState<string[]>([]);
+  const [selectedUserLine, setSelectedUserLine] = useState<string | null>(null);
+  
   const [error, setError] = useState<string | null>(null);
-  const [currentTurn, setCurrentTurn] = useState(0);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [isRecognitionActive, setIsRecognitionActive] = useState(false);
@@ -219,6 +223,7 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [userDialog, setUserDialog] = useState<{ target: string; said: string }[]>([]);
   const [userTranscript, setUserTranscript] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const [practiceWords, setPracticeWords] = useState<PracticeWord[]>([]);
   const [currentPracticeWordIndex, setCurrentPracticeWordIndex] = useState(0);
@@ -236,23 +241,24 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
   const practiceErrorHandlerRef = useRef((_event: SpeechRecognitionErrorEvent) => {});
 
   const processUserTurn = useCallback((transcript: string) => {
-    if (hasProcessedTurn.current) return;
+    if (hasProcessedTurn.current || !selectedUserLine) return;
     hasProcessedTurn.current = true;
 
-    const targetLine = script[currentTurn].line;
-    setUserDialog(prev => [...prev, { target: targetLine, said: transcript }]);
+    setUserDialog(prev => [...prev, { target: selectedUserLine, said: transcript }]);
+    const userLine: ScriptLine = { character: selectedCharacter!, line: selectedUserLine };
     
-    if (currentTurn < script.length - 1) {
-      setCurrentTurn(prev => prev + 1);
-    } else {
+    const newHistory = [...conversationHistory, userLine];
+    setConversationHistory(newHistory);
+    setSelectedUserLine(null);
+
+    if (newHistory.length >= MAX_TURNS) {
       setStep('ANALYZING_PERFORMANCE');
     }
-  }, [script, currentTurn]);
+  }, [selectedUserLine, selectedCharacter, conversationHistory]);
 
   const processUserTurnRef = useRef(processUserTurn);
   useEffect(() => { processUserTurnRef.current = processUserTurn; }, [processUserTurn]);
 
-  // Effect to set up practice recognizer ONCE
   useEffect(() => {
     const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognitionAPI) {
@@ -278,7 +284,6 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
     };
   }, [language]);
 
-  // Effect to update practice recognizer HANDLER LOGIC when state changes
   useEffect(() => {
     practiceResultHandlerRef.current = (event: SpeechRecognitionEvent) => {
         const transcript = event.results?.[0]?.[0]?.transcript.trim();
@@ -497,91 +502,127 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
     }
   }, [practiceStatus]);
 
-  const generateScript = useCallback(async (scene: Scene, character: string) => {
-    setError(null);
-    setStep('LOADING_SCRIPT');
-    
+  const generateConversationTurn = useCallback(async (history: ScriptLine[], scene: Scene, userChar: string, generateFor: 'AI' | 'USER_OPTIONS') => {
     try {
-        const loadedGuidelines = allGuidelines as Guidelines;
+      const loadedGuidelines = allGuidelines as Guidelines;
+      const aiCharacter = TALKERS_CAVE_SCENES[scene].find(c => c !== userChar);
+      if (!aiCharacter) throw new Error("Could not determine AI character.");
 
-        const aiCharacter = TALKERS_CAVE_SCENES[scene].find(c => c !== character);
-        if (!aiCharacter) throw new Error("Could not determine AI character.");
+      const gradeData = loadedGuidelines.grades.find((g: any) => g.grade === userGrade);
+      if (!gradeData) throw new Error(`Guidelines for grade ${userGrade} not found.`);
+      
+      const internalLevelIndex = (currentLevel - 1) % gradeData.level_progression_hint.length;
+      const levelHint = gradeData.level_progression_hint[internalLevelIndex];
+      const { global_rules } = loadedGuidelines;
+      const sightWordExamples = gradeData.sight_words.examples.filter((_:any, i: number) => i % 2 === 0).join(', ');
+      const languageName = language === 'hi' ? 'Hindi' : 'English';
+      
+      const baseSystemInstruction = `You are a scriptwriter for a children's English learning game. Your task is to generate a natural, engaging, and age-appropriate conversation script based on extremely specific educational guidelines. The entire script MUST be in ${languageName}.
+**GLOBAL RULES:**
+- Context: ${global_rules.context}
+- Tone: ${global_rules.tone}
+- Language Control: ${global_rules.language_control}
+- Text Hygiene: ${global_rules.text_hygiene}
+- Prohibited Content: No violence, explicit politics, prejudice, heavy jargon, or typos.
+**GRADE ${userGrade}, LEVEL ${levelHint.level} GUIDELINES:**
+- Reading Level: ${gradeData.reading_level_summary}
+- Word Count (for user lines): Total user lines should be ~${levelHint.target_word_count} words. Each response option should be simple.
+- Sentence Types: Use only: ${gradeData.sentence_types_allowed.join(', ')}. Complexity hints: ${levelHint.sentence_types_hint.join(', ')}.
+- Syllables: ${gradeData.syllables_per_word_target.source_text}
+- Punctuation: Use only: ${gradeData.punctuation_allowed.join(', ')}.
+- Topics: Draw from: ${gradeData.topic_suggestions.join(', ')}.
+- Sight Words: Naturally include some of these: ${sightWordExamples}.
+The scene is "${scene}". The user plays as "${userChar}". The AI is "${aiCharacter}".`;
 
-        const gradeData = loadedGuidelines.grades.find((g: any) => g.grade === userGrade);
-        if (!gradeData) {
-            throw new Error(`Guidelines for grade ${userGrade} not found in orf_content_guidelines.json.`);
-        }
-        
-        const internalLevelIndex = (currentLevel - 1) % gradeData.level_progression_hint.length;
-        const levelHint = gradeData.level_progression_hint[internalLevelIndex];
-        const { global_rules } = loadedGuidelines;
-        const sightWordExamples = gradeData.sight_words.examples.filter((_:any, i: number) => i % 2 === 0).join(', ');
+      let systemInstruction: string, prompt: string, responseSchema: any;
+      const historyText = history.map(h => `${h.character}: ${h.line}`).join('\n');
 
-        const languageName = language === 'hi' ? 'Hindi' : 'English';
-        const systemInstruction = `You are a scriptwriter for a children's English learning game. Your task is to generate a natural, engaging, and age-appropriate conversation script based on extremely specific educational guidelines.
-
-**SCRIPT LANGUAGE:** The entire script, including all lines for all characters, MUST be in ${languageName}.
-
-**GLOBAL RULES (Non-negotiable):**
-- **Context:** ${global_rules.context}
-- **Tone:** ${global_rules.tone}
-- **Language Control:** ${global_rules.language_control}
-- **Text Hygiene:** ${global_rules.text_hygiene}
-- **Prohibited Content:** Do not include content with disallowed themes (violence, explicit politics, prejudice), heavy jargon, typos, or formatting issues.
-
-**GRADE ${userGrade}, LEVEL ${levelHint.level} SPECIFIC GUIDELINES:**
-- **Reading Level Summary:** ${gradeData.reading_level_summary}
-- **Word Count:** The total word count for all 4 of the user's lines COMBINED should be between ${gradeData.word_range.min} and ${gradeData.word_range.max} words. Aim for the target of ${levelHint.target_word_count} words for the user's total lines.
-- **Sentence Types:** Use only these sentence types: ${gradeData.sentence_types_allowed.join(', ')}. The complexity should match these hints: ${levelHint.sentence_types_hint.join(', ')}.
-- **Syllable Complexity:** ${gradeData.syllables_per_word_target.source_text}
-- **Phonics/Morphology Focus:** ${gradeData.phonics_or_morphology_focus}
-- **Punctuation:** Only use the following: ${gradeData.punctuation_allowed.join(', ')}.
-- **Topics:** Draw inspiration from these topics: ${gradeData.topic_suggestions.join(', ')}.
-- **Sight Words:** If it fits naturally, include some of these words: ${sightWordExamples}.
-
-**SCRIPT REQUIREMENTS:**
-- The scene is: "${scene}".
-- The user plays as "${character}". The AI plays as "${aiCharacter}".
-- The AI character ("${aiCharacter}") MUST speak first.
-- The script must be exactly 8 turns (lines) long in total.
-- Your entire response MUST be a single, valid JSON array of 8 objects.
-- Each object must have "character" and "line" string properties.
-- Do NOT use markdown code fences or any other text outside the JSON response.`;
-        
-        const prompt = `Generate the 8-line script for Grade ${userGrade} (Level ${levelHint.level}) in ${languageName} now.`;
-
-        const scriptSchema = {
-            type: Type.ARRAY,
-            items: {
-                type: Type.OBJECT,
-                properties: { character: { type: Type.STRING }, line: { type: Type.STRING } },
-                required: ['character', 'line']
-            }
+      if (generateFor === 'USER_OPTIONS') {
+        systemInstruction = `${baseSystemInstruction}\nYour task is to generate TWO distinct, appropriate, and engaging response options for the user ("${userChar}") based on the conversation so far. Each option must be a single sentence.`;
+        prompt = `Conversation History:\n${historyText}\n\nGenerate two response options for "${userChar}".`;
+        responseSchema = {
+            type: Type.OBJECT,
+            properties: { options: { type: Type.ARRAY, items: { type: Type.STRING }, description: "An array of exactly two distinct string options for the user's reply." } },
+            required: ['options']
         };
-        
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-        const response: GenerateContentResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: { systemInstruction, responseMimeType: "application/json", responseSchema: scriptSchema }
-        });
+      } else { // 'AI'
+        const firstTurn = history.length === 0;
+        systemInstruction = `${baseSystemInstruction}\nYour task is to generate the next line for the AI character ("${aiCharacter}"). ${firstTurn ? 'This is the first line of the conversation; it must start the conversation.' : 'The line must be a natural continuation of the dialogue.'}`;
+        prompt = firstTurn ? `Generate the first line for the AI character, "${aiCharacter}".` : `Conversation History:\n${historyText}\n\nGenerate the next single line for "${aiCharacter}".`;
+        responseSchema = {
+            type: Type.OBJECT,
+            properties: { line: { type: Type.STRING, description: "The AI character's next line." } },
+            required: ['line']
+        };
+      }
+      
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+      const response: GenerateContentResponse = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: prompt,
+          config: { systemInstruction, responseMimeType: "application/json", responseSchema }
+      });
 
-        const parsedScript = extractJson<ScriptLine[]>(response.text);
+      const parsedResponse = extractJson<any>(response.text);
+      if (!parsedResponse) throw new Error("Failed to parse AI response.");
+      return parsedResponse;
 
-        if (Array.isArray(parsedScript) && parsedScript.length === 8 && parsedScript.every(item => 'character' in item && 'line' in item)) {
-            setScript(parsedScript);
-            setStep('GAME');
-            setCurrentTurn(0);
-        } else {
-            throw new Error('Received invalid script format from API. Expected a JSON array of 8 script lines.');
-        }
     } catch (e) {
-        console.error(e);
-        const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
-        setError(`Sorry, I couldn't create a script. ${errorMessage} Please try again.`);
-        setStep('CHARACTER');
+      console.error(e);
+      const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
+      setError(`Sorry, I couldn't continue the story. ${errorMessage} Please try again.`);
+      setStep('CHARACTER');
+      return null;
     }
   }, [userGrade, currentLevel, language]);
+  
+  const startConversation = useCallback(async (scene: Scene, character: string) => {
+    setError(null);
+    setStep('LOADING_SCRIPT');
+    setIsGenerating(true);
+    
+    const response = await generateConversationTurn([], scene, character, 'AI');
+    
+    setIsGenerating(false);
+    if (response && response.line) {
+        const firstLine: ScriptLine = {
+            character: TALKERS_CAVE_SCENES[scene].find(c => c !== character)!,
+            line: response.line
+        };
+        setConversationHistory([firstLine]);
+        setStep('GAME');
+    }
+  }, [generateConversationTurn]);
+
+  const fetchUserOptions = useCallback(async (history: ScriptLine[], scene: Scene, character: string) => {
+    setIsGenerating(true);
+    setUserResponseOptions([]);
+    const response = await generateConversationTurn(history, scene, character, 'USER_OPTIONS');
+    setIsGenerating(false);
+    if (response && Array.isArray(response.options) && response.options.length === 2) {
+      setUserResponseOptions(response.options);
+    } else {
+      setError("Sorry, I couldn't think of what to say next. Please try again.");
+      setStep('CHARACTER');
+    }
+  }, [generateConversationTurn]);
+
+  const fetchAiResponse = useCallback(async (history: ScriptLine[], scene: Scene, character: string) => {
+    setIsGenerating(true);
+    const response = await generateConversationTurn(history, scene, character, 'AI');
+    setIsGenerating(false);
+    if (response && response.line) {
+      const aiLine: ScriptLine = {
+        character: TALKERS_CAVE_SCENES[scene].find(c => c !== character)!,
+        line: response.line
+      };
+      setConversationHistory(prev => [...prev, aiLine]);
+    } else {
+      setError("Sorry, the AI seems to be stuck. Please try again.");
+      setStep('CHARACTER');
+    }
+  }, [generateConversationTurn]);
+
 
   const startRecognition = useCallback(() => {
     if (!speechRecognizer || isRecognitionActive) return;
@@ -605,27 +646,46 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
       startRecognition();
     }
   };
-
+  
+  // Game Loop Effect
   useEffect(() => {
-    if (step !== 'GAME' || !script.length || currentTurn >= script.length || recognitionError || isAiSpeaking) return;
-    const currentLine = script[currentTurn];
-    const isUserTurn = currentLine.character === selectedCharacter;
-    
-    if (isUserTurn) {
-      // User will now manually click the microphone button
-    } else {
-        if (speechRecognizer) try { speechRecognizer.stop(); } catch (e) {}
-        const handleAiTurnEnd = () => {
-            if (currentTurn < script.length - 1) {
-              setCurrentTurn(prev => prev + 1);
-            } else {
-              setStep('ANALYZING_PERFORMANCE');
-            }
-        };
-        const timeoutId = setTimeout(() => speak(currentLine.line, handleAiTurnEnd), 700);
-        return () => clearTimeout(timeoutId);
+    if (step !== 'GAME' || !selectedScene || !selectedCharacter || isAiSpeaking || isGenerating) return;
+
+    const historyLength = conversationHistory.length;
+    if (historyLength === 0 || historyLength >= MAX_TURNS) return;
+
+    const lastSpeaker = conversationHistory[historyLength - 1].character;
+    const isUserTurnNow = lastSpeaker !== selectedCharacter;
+
+    if (isUserTurnNow) {
+        // We need to fetch user options
+        if (userResponseOptions.length === 0) {
+            fetchUserOptions(conversationHistory, selectedScene, selectedCharacter);
+        }
+    } else { // AI's turn to respond
+        fetchAiResponse(conversationHistory, selectedScene, selectedCharacter);
     }
-  }, [step, script, currentTurn, selectedCharacter, speak, speechRecognizer, recognitionError, isAiSpeaking]);
+  }, [step, conversationHistory, selectedCharacter, selectedScene, isAiSpeaking, isGenerating, fetchUserOptions, fetchAiResponse]);
+  
+  // Effect for AI speaking when a new AI line is added to history
+  useEffect(() => {
+    if (step !== 'GAME' || conversationHistory.length === 0) return;
+    
+    const lastMessage = conversationHistory[conversationHistory.length - 1];
+    const isAiTurn = lastMessage.character !== selectedCharacter;
+    
+    if (isAiTurn && !isAiSpeaking) {
+      const handleAiTurnEnd = () => {
+        if (conversationHistory.length >= MAX_TURNS) {
+          setStep('ANALYZING_PERFORMANCE');
+        }
+      };
+      
+      const timeoutId = setTimeout(() => speak(lastMessage.line, handleAiTurnEnd), 700);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [conversationHistory, step, selectedCharacter, speak]);
+
 
   useEffect(() => () => {
     if (window.speechSynthesis) window.speechSynthesis.cancel();
@@ -634,7 +694,13 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
   }, [speechRecognizer]);
 
   const handleSceneSelect = (scene: Scene) => { setSelectedScene(scene); setStep('CHARACTER'); };
-  const handleCharacterSelect = (character: string) => { setMistakes([]); setUserDialog([]); setSelectedCharacter(character); generateScript(selectedScene!, character); };
+  const handleCharacterSelect = (character: string) => { 
+    setMistakes([]); 
+    setUserDialog([]); 
+    setConversationHistory([]);
+    setSelectedCharacter(character); 
+    startConversation(selectedScene!, character);
+  };
   const handleBackToScenes = () => { setStep('SCENE'); setSelectedCharacter(null); setSelectedScene(null); setCenteredScene('Shopkeeper and Customer'); };
 
   const pronounceWord = (text: string) => {
@@ -666,6 +732,11 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
     }
     return {};
   }, [step, selectedScene]);
+
+  const handleUserOptionSelect = (option: string) => {
+    setSelectedUserLine(option);
+    setUserResponseOptions([]);
+  };
 
   const renderTitle = () => {
     switch (step) {
@@ -717,38 +788,63 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
       case 'PRACTICE_PREP': return <div className="text-center text-slate-300 animate-pulse text-2xl">Analyzing words for practice...</div>;
 
       case 'GAME': {
-        if (!script.length || !selectedCharacter || !selectedScene) return null;
+        if (conversationHistory.length === 0 || !selectedCharacter || !selectedScene) return null;
+
         const [characterOnLeft, characterOnRight] = TALKERS_CAVE_SCENES[selectedScene];
-        const currentLine = script[currentTurn];
+        const currentLine = conversationHistory[conversationHistory.length - 1];
         const isLeftCharacterSpeaking = currentLine.character === characterOnLeft;
-        const isUserTurn = currentLine.character === selectedCharacter;
+        const isUserTurn = currentLine.character !== selectedCharacter;
+
+        const aiThinking = isGenerating && isUserTurn && userResponseOptions.length === 0;
 
         return (
           <div className='w-full h-full relative flex flex-col overflow-hidden'>
             <div className="flex-grow relative flex items-end justify-center px-4 overflow-hidden">
               <div className={`absolute bottom-0 left-0 md:left-[5%] w-1/2 md:w-2/5 h-2/3 md:h-4/5 transition-transform duration-500 ${isLeftCharacterSpeaking ? 'scale-110' : 'scale-100'}`}><img src={TALKERS_CAVE_CHARACTER_IMAGES[characterOnLeft]} alt={characterOnLeft} className="w-full h-full object-contain"/></div>
               <div className={`absolute bottom-0 right-0 md:right-[5%] w-1/2 md:w-2/5 h-2/3 md:h-4/5 transition-transform duration-500 ${!isLeftCharacterSpeaking ? 'scale-110' : 'scale-100'}`}><img src={TALKERS_CAVE_CHARACTER_IMAGES[characterOnRight]} alt={characterOnRight} className="w-full h-full object-contain"/></div>
-              <div className={`absolute top-[8%] w-4/5 md:w-2/5 max-w-lg transition-all duration-300 ease-out ${!isLeftCharacterSpeaking ? 'right-[5%] md:right-[15%]' : 'left-[5%] md:left-[15%]'}`}>
-                <div className={`relative bg-white text-slate-900 p-4 rounded-2xl shadow-2xl ${!isLeftCharacterSpeaking ? 'rounded-br-none' : 'rounded-bl-none'}`}>
-                  {isUserTurn ? (
-                    <>
-                      <p className="text-lg font-medium leading-relaxed">{currentLine.line}</p>
-                      {(isRecognitionActive || userTranscript) && (
-                        <>
-                          <hr className="my-2 border-slate-200" />
-                          <p className="text-lg font-medium leading-relaxed text-slate-500 min-h-[1.5em]">
-                            {userTranscript || 'Listening...'}
-                          </p>
-                        </>
-                      )}
-                    </>
-                  ) : <p className="text-lg font-medium">{currentLine.line}</p>}
-                  <div className={`absolute bottom-0 h-0 w-0 border-solid border-transparent border-t-white ${!isLeftCharacterSpeaking ? 'right-4 border-r-[15px] border-l-0 border-t-[15px] -mb-[15px]' : 'left-4 border-l-[15px] border-r-0 border-t-[15px] -mb-[15px]'}`}></div>
+              
+              {!isUserTurn && (
+                <div className={`absolute top-[8%] w-4/5 md:w-2/5 max-w-lg transition-all duration-300 ease-out ${!isLeftCharacterSpeaking ? 'right-[5%] md:right-[15%]' : 'left-[5%] md:left-[15%]'}`}>
+                    <div className={`relative bg-white text-slate-900 p-4 rounded-2xl shadow-2xl ${!isLeftCharacterSpeaking ? 'rounded-br-none' : 'rounded-bl-none'}`}>
+                    <p className="text-lg font-medium">{currentLine.line}</p>
+                    <div className={`absolute bottom-0 h-0 w-0 border-solid border-transparent border-t-white ${!isLeftCharacterSpeaking ? 'right-4 border-r-[15px] border-l-0 border-t-[15px] -mb-[15px]' : 'left-4 border-l-[15px] border-r-0 border-t-[15px] -mb-[15px]'}`}></div>
+                    </div>
                 </div>
-              </div>
+              )}
+
+              {isUserTurn && selectedUserLine && (
+                 <div className={`absolute top-[8%] w-4/5 md:w-2/5 max-w-lg transition-all duration-300 ease-out ${selectedCharacter === characterOnLeft ? 'left-[5%] md:left-[15%]' : 'right-[5%] md:right-[15%]'}`}>
+                    <div className={`relative bg-white text-slate-900 p-4 rounded-2xl shadow-2xl ${selectedCharacter === characterOnLeft ? 'rounded-bl-none' : 'rounded-br-none'}`}>
+                        <p className="text-lg font-medium leading-relaxed">{selectedUserLine}</p>
+                        {(isRecognitionActive || userTranscript) && (
+                        <>
+                            <hr className="my-2 border-slate-200" />
+                            <p className="text-lg font-medium leading-relaxed text-slate-500 min-h-[1.5em]">
+                            {userTranscript || 'Listening...'}
+                            </p>
+                        </>
+                        )}
+                        <div className={`absolute bottom-0 h-0 w-0 border-solid border-transparent border-t-white ${selectedCharacter === characterOnLeft ? 'left-4 border-l-[15px] border-r-0 border-t-[15px] -mb-[15px]' : 'right-4 border-r-[15px] border-l-0 border-t-[15px] -mb-[15px]'}`}></div>
+                    </div>
+                </div>
+              )}
+
+              {isUserTurn && !selectedUserLine && userResponseOptions.length > 0 && (
+                <div className="absolute inset-x-0 top-1/4 flex flex-col items-center gap-4 animate-fade-in p-4">
+                  <h3 className="text-xl font-bold mb-2 text-white" style={{textShadow: '1px 1px 4px rgba(0,0,0,0.7)'}}>Choose your reply:</h3>
+                  {userResponseOptions.map((option, index) => (
+                    <button key={index} onClick={() => handleUserOptionSelect(option)}
+                      className="w-full max-w-md bg-indigo-600 text-white font-semibold p-4 rounded-xl text-lg shadow-lg hover:bg-indigo-500 transition-transform transform hover:scale-105"
+                    >
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="h-16 flex-shrink-0 bg-slate-900/50 flex items-center justify-center text-slate-300 relative">
-              {recognitionError ? <p className="text-red-400 font-semibold">{recognitionError}</p> : (isUserTurn ? (
+              {recognitionError ? <p className="text-red-400 font-semibold">{recognitionError}</p> : (
+                isUserTurn && selectedUserLine ? (
                   <button
                       onClick={handleMicButtonClick}
                       disabled={isAiSpeaking}
@@ -759,7 +855,8 @@ export const TalkersCaveGame: React.FC<TalkersCaveGameProps> = ({ onComplete, us
                   >
                       <MicrophoneIcon className="w-8 h-8 text-white" />
                   </button>
-                ) : <p className="text-lg animate-pulse">{isAiSpeaking ? 'AI is speaking...' : 'AI is thinking...'}</p>)}
+                ) : <p className="text-lg animate-pulse">{isAiSpeaking ? 'AI is speaking...' : (aiThinking ? 'Thinking of what you can say...' : 'AI is thinking...')}</p>
+              )}
             </div>
           </div>
         );
